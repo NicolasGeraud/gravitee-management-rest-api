@@ -275,6 +275,7 @@ public class ApplicationSubscriptionsResource {
                 ));
 
         subscription.setClosedAt(subscriptionEntity.getClosedAt());
+        subscription.setPausedAt(subscriptionEntity.getPausedAt());
 
         return subscription;
     }
