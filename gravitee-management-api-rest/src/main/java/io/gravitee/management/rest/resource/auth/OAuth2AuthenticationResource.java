@@ -66,6 +66,7 @@ import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static java.util.Collections.singleton;
 import static org.springframework.security.core.authority.AuthorityUtils.commaSeparatedStringToAuthorityList;
@@ -392,29 +393,43 @@ public class OAuth2AuthenticationResource extends AbstractAuthenticationResource
         }
     }
 
-    private Set<GroupEntity> getGroupsToAddUser(String userId, List<GroupMappingEntity> mappings, String userInfo) {
-        Set<GroupEntity> groupsToAdd = new HashSet<>();
+    Set<GroupEntity> getGroupsToAddUser(String userId, List<GroupMappingEntity> mappings, String userInfo) {
+        TemplateEngine templateEngine = TemplateEngine.templateEngine();
+        templateEngine.getTemplateContext().setVariable(TEMPLATE_ENGINE_PROFILE_ATTRIBUTE, userInfo);
 
-        for (GroupMappingEntity mapping : mappings) {
-            TemplateEngine templateEngine = TemplateEngine.templateEngine();
-            templateEngine.getTemplateContext().setVariable(TEMPLATE_ENGINE_PROFILE_ATTRIBUTE, userInfo);
-
-            boolean match = templateEngine.getValue(mapping.getCondition(), boolean.class);
-
-            trace(userId, match, mapping.getCondition());
-
-            // Get groups
-            if (match) {
-                for (String groupName : mapping.getGroups()) {
+        return  mappings.stream()
+                //filter only true condition
+                .filter(m-> {
+                    boolean match = templateEngine.getValue(m.getCondition(), boolean.class);
+                    trace(userId, match, m.getCondition());
+                    return match;
+                })
+                //work on groups List
+                .flatMap(m ->  m.getGroups().stream())
+                //process name : if name not a tamplate return List(Name)  else return List in profil
+                .flatMap(g ->  {
                     try {
-                        groupsToAdd.add(groupService.findById(groupName));
-                    } catch (GroupNotFoundException gnfe) {
-                        LOGGER.error("Unable to create user, missing group in repository : {}", groupName);
+                        return ((List<String>) templateEngine.getValue(g, List.class)).stream();
                     }
-                }
-            }
-        }
-        return groupsToAdd;
+                    //catch if error in template
+                    catch (NullPointerException npe){
+                        LOGGER.error("Unable parse group, template {} dont work : {}", g, npe);
+                        return Stream.of();
+                    }
+                })
+                //try to find group in groupSErvice
+                .map( g -> {
+                    try {
+                        return  groupService.findById(g);
+                    } catch (GroupNotFoundException gnfe) {
+                        LOGGER.error("Unable to create user, missing group in repository : {}", g);
+                        return null;
+                    }
+                })
+                //remove null line
+                .filter(Objects::nonNull)
+                //collect in Set
+                .collect(Collectors.toSet());
     }
 
     private Set<RoleEntity> getRolesToAddUser(String username, List<RoleMappingEntity> mappings, String userInfo) {
